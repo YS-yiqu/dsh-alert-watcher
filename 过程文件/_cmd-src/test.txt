@@ -1,0 +1,6 @@
+@echo off
+chcp 936 >nul
+echo DSH 断网提醒：正在发送测试提醒（邮件 + 桌面通知）...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0过程文件\test-notify.ps1"
+echo.
+pause

@@ -1,0 +1,6 @@
+@echo off
+chcp 936 >nul
+echo DSH 断网提醒：正在停止常驻监测...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0过程文件\stop-watcher.ps1"
+echo.
+pause

@@ -1,0 +1,24 @@
+{
+  "pollSeconds": 10,
+  "activeWindowMinutes": 10,
+  "offlineAfterFailures": 2,
+  "renotifyMinutes": 10,
+  "remindAgainMinutes": 15,
+  "restartCheckSeconds": 120,
+  "restartRemindMinutes": 120,
+  "probe": {
+    "host": "api.deepseek.com",
+    "port": 443,
+    "timeoutMs": 5000
+  },
+  "mail": {
+    "enabled": true,
+    "to": [
+      "your-address@example.com"
+    ],
+    "from": "your-address@example.com"
+  },
+  "toast": {
+    "enabled": true
+  }
+}
