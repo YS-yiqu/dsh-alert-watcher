@@ -242,15 +242,29 @@ function probeNetwork() {
 
 // ---------- 提醒派发 ----------
 
-function runPs(script, args) {
+function runPs(script, args, timeoutMs = 60000) {
   return new Promise((resolve) => {
     const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...args], { windowsHide: true })
     let out = ''
     let err = ''
+    let done = false
+    let timer = null
+    const finish = (r) => {
+      if (done) return
+      done = true
+      if (timer) clearTimeout(timer)
+      resolve(r)
+    }
+    // 卡死保护：Outlook COM 偶尔一直不返回（2026-09-28 实测挂住 4 小时，主循环连同
+    // 心跳一起停摆）。超时就把子进程收掉，按 code=-2 返回，调用方据此决定是否进待发队列。
+    timer = setTimeout(() => {
+      try { child.kill() } catch {}
+      finish({ code: -2, out: out.trim(), err: (err + ' [timeout ' + timeoutMs + 'ms]').trim() })
+    }, timeoutMs)
     child.stdout.on('data', (d) => { out += d.toString() })
     child.stderr.on('data', (d) => { err += d.toString() })
-    child.on('close', (code) => resolve({ code, out: out.trim(), err: err.trim() }))
-    child.on('error', (e) => resolve({ code: -1, out: '', err: e.message }))
+    child.on('close', (code) => finish({ code, out: out.trim(), err: err.trim() }))
+    child.on('error', (e) => finish({ code: -1, out: '', err: e.message }))
   })
 }
 
@@ -327,7 +341,12 @@ async function notify(subject, bodyLines) {
     const r = await sendMail(subject, body)
     results.push('邮件=' + (r.code === 0 ? 'ok' : 'fail:' + (r.err || r.code)))
     log('邮件结果：' + (r.out || r.err || r.code))
-    if (r.code !== 0) queueMail(subject, body, r.err || r.out || r.code)
+    if (r.code === -2) {
+      // 超时被杀：信可能已经交给 Outlook、也可能没交出去，状态未知 → 不自动补发，免得重复。
+      log('邮件发送超时被中止，状态未知，不自动补发（免得重复）：' + subject)
+    } else if (r.code !== 0) {
+      queueMail(subject, body, r.err || r.out || r.code)
+    }
   }
   if (toastCfg.enabled) {
     const r = await runPs(TOAST_SCRIPT, ['-MessageFile', messageFile])

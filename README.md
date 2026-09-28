@@ -23,6 +23,8 @@
 3. 双击 **立即测试提醒.cmd** —— 邮箱收到信、桌面弹出通知，就说明通道通了。
 4. 双击 **启动提醒.cmd**；想让它开机自动盯着，再跑一次 `过程文件\register-task.ps1`（注册计划任务 DSH-Alert-Watcher，登录时启动、并每 15 分钟巡检补拉）。
 
+> 计划任务的动作走 `过程文件\run-hidden.exe`（无控制台启动器），所以每 15 分钟的巡检**不会闪黑窗**。这个 exe 首次注册时由 `register-task.ps1` 用 `RunHidden.cs` 现编译（找不到 csc 时退回 powershell 方式，能跑，但每次巡检会闪一下）。**不要把任务动作改回 `powershell.exe -WindowStyle Hidden`** —— 挡不住闪窗。
+
 平时的入口就四个：`启动提醒.cmd`、`停止提醒.cmd`、`立即测试提醒.cmd`、`查看状态.cmd`。
 
 > 注：`.cmd` 启动器是 GBK 编码（中文 Windows 控制台需要），在 GitHub 网页上预览可能显示成乱码，属正常现象；`.md`、`.mjs`、`.json` 都是 UTF-8。
@@ -69,7 +71,8 @@
   check-restart.ps1  判断「需不需要重启 DSH」
   start/stop-watcher.ps1  启停监测进程
   status.ps1         查看状态
-  register-task.ps1  注册开机自启计划任务
+  register-task.ps1  注册开机自启计划任务（用无控制台启动器，不闪黑窗）
+  RunHidden.cs       启动器源码（首次注册时编译成 run-hidden.exe）
   config.json        配置
   logs/ state.json watcher.json  运行期产物（不入库）
 ```

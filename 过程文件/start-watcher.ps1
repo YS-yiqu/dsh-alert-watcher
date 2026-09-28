@@ -9,7 +9,10 @@ $hbFile = Join-Path $here 'watcher.json'
 # nvm 的 .nodejs\node.exe 是代理壳，不同启动方式命令行写法会变，匹配容易误判 →
 # 误判成"没在跑"就会重复起进程、重复发提醒邮件（2026-09-25 实测发生过）。
 # 心跳里的 pid 是 node 自己的 process.pid，即真正在跑的那个进程，杀掉它才真停。
-function Get-EpochMs { return [int64]((Get-Date).ToUniversalTime() - (Get-Date '1970-01-01 00:00:00Z')).TotalMilliseconds }
+function Get-EpochMs { return [int64][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
+# 别再用 (Get-Date '1970-01-01 00:00:00Z') 当基准：PowerShell 把末尾的 Z 解析成本地时间
+# 08:00，算出的 epoch 整整差 8 小时，心跳「年龄」成了负数 → 卡死的监测器被判成"还活着"，
+# 看门狗不敢重启（2026-09-28 实测：监测器 11:18 卡死，15:07/15:18 两次巡检都没拉起来）。
 
 function Test-WatcherAlive {
   param([int]$MaxAgeSec = 60)
@@ -20,6 +23,23 @@ function Test-WatcherAlive {
     if ($age -gt ($MaxAgeSec * 1000)) { return $false }
     return [bool](Get-Process -Id ([int]$j.pid) -ErrorAction SilentlyContinue)
   } catch { return $false }
+}
+
+# 心跳过期 = 主循环卡住了（例如 Outlook COM 一直不返回）：进程还在，但已经不会写心跳、
+# 也不会再发提醒，属于僵尸。按心跳里的 pid 收掉它，否则新的起不来、旧的白占着位。
+# 只杀命令行确实是监测器的进程，避免 pid 被回收后误杀别的程序。
+function Stop-HeartbeatProcess {
+  if (-not (Test-Path -LiteralPath $hbFile)) { return }
+  try {
+    $j = [System.IO.File]::ReadAllText($hbFile, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+    $oldPid = [int]$j.pid
+    $p = Get-CimInstance Win32_Process -Filter ("ProcessId = " + $oldPid) -ErrorAction SilentlyContinue
+    if ($p -and $p.CommandLine -and ($p.CommandLine -match 'dsh-alert\.mjs')) {
+      Write-Output ('heartbeat is stale, killing hung watcher pid=' + $oldPid)
+      & taskkill /PID $oldPid /T /F 2>&1 | Out-Null
+      Start-Sleep -Seconds 1
+    }
+  } catch { }
 }
 
 # 兜底清扫：命令行以 dsh-alert.mjs 结尾的 node 进程（防历史遗留的孤儿）
@@ -65,6 +85,8 @@ if ($alive) {
   Write-Output ('stopping running watcher, pid=' + $j.pid)
   & taskkill /PID ([int]$j.pid) /T /F 2>&1 | Out-Null
   Start-Sleep -Seconds 1
+} else {
+  Stop-HeartbeatProcess   # 心跳过期但进程还在 = 卡死的僵尸，也要收掉
 }
 [void](Clear-StrayWatchers)
 
