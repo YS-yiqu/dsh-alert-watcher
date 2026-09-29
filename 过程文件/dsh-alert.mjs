@@ -42,6 +42,9 @@ const renotifyMs = (config.renotifyMinutes ?? 10) * 60_000
 const remindAgainMs = (config.remindAgainMinutes ?? 15) * 60_000
 const restartCheckMs = (config.restartCheckSeconds ?? 120) * 1000
 const restartRemindMs = (config.restartRemindMinutes ?? 120) * 60_000
+// 日志里挂着未闭合的 step、但一小时没写过任何东西：这不是"在跑"，是会话被中途杀掉
+// 留下的残迹（正常情况下每走一步都会写日志，不会静默这么久）。
+const STALE_OPEN_STEP_MS = 60 * 60_000
 const probe = config.probe ?? { host: 'api.deepseek.com', port: 443, timeoutMs: 5000 }
 const mailCfg = config.mail ?? { enabled: true, to: [], from: '' }
 const toastCfg = config.toast ?? { enabled: true }
@@ -119,6 +122,8 @@ function candidateSessions() {
       id: j?.record?.identity?.sessionId ?? f.replace(/\.json$/, ''),
       title: rows.title?.val ?? '(无标题)',
       cwd: rows.identity?.cwd ?? j?.record?.identity?.cwd ?? '',
+      // 子代理会话（助手派出去的子会话）在 projcache 里带 subagent 行，普通会话是空对象。
+      isSubagent: Boolean(rows.subagent?.val?.identity),
       openStep,
       openTurn,
       pendingCalls: stats.pendingCalls ?? {},
@@ -208,14 +213,23 @@ function inspectSession(c) {
 }
 
 function scanSessions() {
-  const all = candidateSessions()
+  // 子代理会话一律不提醒：它是助手派活的产物，标题是原始提示词（title 走的是 fallback，
+  // 显示出来就是半句任务提示），用户既认不出也点不进去。子代理有事，由父会话出面提醒。
+  const all = candidateSessions().filter((c) => !c.isSubagent)
   const inspected = all.filter((c) => c.open).map(inspectSession)
+  const byId = new Map(inspected.map((i) => [i.id, i]))
   const idx = sessionLogIndex()
   const active = []
   for (const c of all) {
     const e = idx.get(c.id)
     const age = e ? Date.now() - e.mtimeMs : Infinity
-    if (c.open || age < activeWindowMs) active.push({ ...c, ageSec: Math.round(age / 1000) })
+    const verdict = byId.get(c.id)?.verdict
+    const waitingOnUser = verdict === 'asking' || verdict === 'approval'
+    // 只凭「turn 没闭合」不能当成还在跑：会话中途死掉（DSH 重启、进程被收掉）时 turn
+    // 记录不会闭合，会把一个几天前的死会话永久算成活跃，于是每次断网/恢复都重复提醒。
+    const openStepLive = c.openStep !== null && age < STALE_OPEN_STEP_MS
+    const live = openStepLive || age < activeWindowMs || waitingOnUser
+    if (live) active.push({ ...c, ageSec: Math.round(age / 1000) })
   }
   active.sort((a, b) => a.ageSec - b.ageSec)
   return { all, inspected, active }
