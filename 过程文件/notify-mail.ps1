@@ -9,7 +9,11 @@ $ErrorActionPreference = 'Stop'
 #   2) Send() 之后等它离开发件箱再报结果：已离开=sent，仍在发件箱=queued（离线时 Outlook 自己
 #      排队、联网后自动发出），两种情况都算交接成功、都不要再补发，避免收件人收到重复邮件；
 #   3) 只有 COM 彻底失败（邮件根本没交给 Outlook）才以 exit 1 结束，由监测器放进待发队列补发；
-#   4) 不调用 Quit()：让 Outlook 常驻，离线时排队的邮件才能在联网后自己发出去。
+#   4) 不调用 Quit()：让 Outlook 常驻，离线时排队的邮件才能在联网后自己发出去；
+#   5) 挑发信账户只读 Account.DisplayName / Account.UserName：Account.SmtpAddress 是
+#      Office 对象模型防护（Object Model Guard）保护的属性，一读就弹「有程序正试图
+#      访问存储在 Outlook 中的电子邮件地址信息」对话框，会把这次发信一直挂住
+#      （2026-09-30 就是这么挂了 60 秒超时、提醒邮件发不出去）。
 try {
   $lines = @(Get-Content -LiteralPath $MessageFile -Encoding UTF8)
   if ($lines.Count -eq 0) { throw 'empty message file' }
@@ -27,7 +31,9 @@ try {
       $ns = $ol.GetNamespace('MAPI')
       $mail = $ol.CreateItem(0)
       if ($Account -ne '') {
-        foreach ($a in $ns.Accounts) { if ($a.SmtpAddress -eq $Account) { $mail.SendUsingAccount = $a } }
+        foreach ($a in $ns.Accounts) {
+          if ($a.DisplayName -eq $Account -or $a.UserName -eq $Account) { $mail.SendUsingAccount = $a; break }
+        }
       }
       $mail.To = ($recipients -join ';')
       $mail.Subject = $subject
